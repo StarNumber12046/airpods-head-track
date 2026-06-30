@@ -19,8 +19,8 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, FILE_SHARE_READ, FILE_SHARE_WRITE,
     OPEN_EXISTING,
 };
-use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
 /// Device interface GUID exposed by the MagicAAP profile driver.
 /// {9eec98bb-3c54-45d4-a843-7900c4635e08}
@@ -126,8 +126,7 @@ pub fn enumerate_connected_airpods() -> Result<Vec<AirPodsDevice>> {
 
             // Allocate buffer and get detail
             let mut buf = vec![0u8; required_size as usize];
-            let detail =
-                buf.as_mut_ptr() as *mut SP_DEVICE_INTERFACE_DETAIL_DATA_W;
+            let detail = buf.as_mut_ptr() as *mut SP_DEVICE_INTERFACE_DETAIL_DATA_W;
             (*detail).cbSize = std::mem::size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>() as u32;
 
             let ok = SetupDiGetDeviceInterfaceDetailW(
@@ -154,10 +153,7 @@ pub fn enumerate_connected_airpods() -> Result<Vec<AirPodsDevice>> {
 
                 // Extract MAC from path: look for pattern &XXXXXXXXXXXX_c
                 if let Some(mac_hex) = extract_mac_from_path(&path) {
-                    devices.push(AirPodsDevice {
-                        path,
-                        mac_hex,
-                    });
+                    devices.push(AirPodsDevice { path, mac_hex });
                 } else {
                     // Still add it even if we can't extract the MAC
                     devices.push(AirPodsDevice {
@@ -215,14 +211,22 @@ impl BtConnection {
             ));
         }
 
-        info!("Found {} AirPods device(s) via MagicAAP driver", devices.len());
+        info!(
+            "Found {} AirPods device(s) via MagicAAP driver",
+            devices.len()
+        );
         for (i, dev) in devices.iter().enumerate() {
             let mac_display = if dev.mac_hex.is_empty() {
                 "unknown".to_string()
             } else {
                 format_mac_address(&dev.mac_hex)
             };
-            info!("  [{}] MAC: {} Path: {}...", i, mac_display, &dev.path[..dev.path.len().min(60)]);
+            info!(
+                "  [{}] MAC: {} Path: {}...",
+                i,
+                mac_display,
+                &dev.path[..dev.path.len().min(60)]
+            );
         }
 
         // Find the target device
@@ -236,7 +240,10 @@ impl BtConnection {
                         "AirPods with MAC {} not found among connected devices.\n\
                          Available: {:?}",
                         filter,
-                        devices.iter().map(|d| format_mac_address(&d.mac_hex)).collect::<Vec<_>>()
+                        devices
+                            .iter()
+                            .map(|d| format_mac_address(&d.mac_hex))
+                            .collect::<Vec<_>>()
                     )
                 })?
         } else {
@@ -247,7 +254,11 @@ impl BtConnection {
         info!("Opening connection to AirPods (MAC: {})...", mac_display);
 
         // Open the device interface with CreateFile
-        let path_wide: Vec<u16> = target.path.encode_utf16().chain(std::iter::once(0)).collect();
+        let path_wide: Vec<u16> = target
+            .path
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         let handle = unsafe {
             CreateFileW(
@@ -281,7 +292,10 @@ impl BtConnection {
     pub fn send(&self, data: &[u8]) -> Result<usize> {
         unsafe {
             let event = CreateEventW(None, true, false, None)?;
-            let mut overlapped = OVERLAPPED { hEvent: event, ..Default::default() };
+            let mut overlapped = OVERLAPPED {
+                hEvent: event,
+                ..Default::default()
+            };
 
             let mut bytes_written: u32 = 0;
             let result = WriteFile(
@@ -320,7 +334,10 @@ impl BtConnection {
     pub fn recv_timeout(&self, buf: &mut [u8], timeout_ms: u32) -> Result<usize> {
         unsafe {
             let event = CreateEventW(None, true, false, None)?;
-            let mut overlapped = OVERLAPPED { hEvent: event, ..Default::default() };
+            let mut overlapped = OVERLAPPED {
+                hEvent: event,
+                ..Default::default()
+            };
 
             let mut bytes_read: u32 = 0;
             let result = ReadFile(

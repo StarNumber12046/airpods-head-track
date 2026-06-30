@@ -59,10 +59,7 @@ fn main() -> Result<()> {
     } else {
         info!("Target MAC: auto-detect (first available)");
     }
-    info!(
-        "OpenTrack: {}:{}",
-        args.opentrack_addr, args.opentrack_port
-    );
+    info!("OpenTrack: {}:{}", args.opentrack_addr, args.opentrack_port);
     info!("Sensitivity: {:.2}x", args.sensitivity);
     info!("");
 

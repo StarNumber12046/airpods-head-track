@@ -75,7 +75,9 @@ impl<'a> AacpManager<'a> {
                 std::thread::sleep(std::time::Duration::from_millis(1000));
             }
 
-            self.conn.send(&handshake).context("Failed to send handshake")?;
+            self.conn
+                .send(&handshake)
+                .context("Failed to send handshake")?;
             debug!("Sent handshake packet (attempt {})", attempt + 1);
 
             // Wait for handshake ACK with longer timeout
@@ -91,7 +93,10 @@ impl<'a> AacpManager<'a> {
                     break;
                 }
                 Ok(_) => {
-                    warn!("Received empty handshake response (attempt {})", attempt + 1);
+                    warn!(
+                        "Received empty handshake response (attempt {})",
+                        attempt + 1
+                    );
                 }
                 Err(e) => {
                     warn!(
@@ -105,7 +110,7 @@ impl<'a> AacpManager<'a> {
 
         if !ack_received {
             return Err(anyhow::anyhow!(
-                 "Failed to receive handshake ACK after {} attempts.\n\
+                "Failed to receive handshake ACK after {} attempts.\n\
                  Possible causes:\n\
                  - AirPods may not be in ear / lid may be closed\n\
                  - Another app may have an active AACP session (e.g., MagicPods)\n\
@@ -137,14 +142,8 @@ impl<'a> AacpManager<'a> {
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Step 3: Request notifications
-        let request_notif = Self::make_data_packet(&[
-            opcodes::REQUEST_NOTIFICATIONS,
-            0x00,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-        ]);
+        let request_notif =
+            Self::make_data_packet(&[opcodes::REQUEST_NOTIFICATIONS, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]);
         self.conn
             .send(&request_notif)
             .context("Failed to send notification request")?;

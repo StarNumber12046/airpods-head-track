@@ -54,12 +54,12 @@ impl OpenTrackSender {
     pub fn send(&self, orientation: &Orientation) -> Result<()> {
         // OpenTrack protocol: 6 x f64 (little-endian doubles), 48 bytes total
         let data: [f64; 6] = [
-            0.0,                       // x - no translation data available
-            0.0,                       // y - no translation data available
-            0.0,                       // z - no translation data available
-            orientation.yaw as f64,    // yaw (left/right rotation)
-            orientation.pitch as f64,  // pitch (up/down rotation)
-            orientation.roll as f64,   // roll (tilt, always 0 for now)
+            0.0,                      // x - no translation data available
+            0.0,                      // y - no translation data available
+            0.0,                      // z - no translation data available
+            orientation.yaw as f64,   // yaw (left/right rotation)
+            orientation.pitch as f64, // pitch (up/down rotation)
+            orientation.roll as f64,  // roll (tilt, always 0 for now)
         ];
 
         let bytes: Vec<u8> = data.iter().flat_map(|d| d.to_le_bytes()).collect();
