@@ -1,7 +1,7 @@
 //! AirPods Head Tracking for Windows
 //!
-//! Connects to AirPods via Bluetooth L2CAP, receives head tracking data,
-//! and outputs orientation to OpenTrack via UDP.
+//! Connects to AirPods via Bluetooth L2CAP (using the MagicAAP driver),
+//! receives head tracking data, and outputs orientation to OpenTrack via UDP.
 
 mod aacp;
 mod bluetooth;
@@ -9,8 +9,8 @@ mod head_tracking;
 mod opentrack;
 
 use aacp::AacpManager;
-use anyhow::{Context, Result};
-use bluetooth::{parse_mac_address, BtConnection};
+use anyhow::Result;
+use bluetooth::BtConnection;
 use clap::Parser;
 use head_tracking::HeadTracker;
 use log::{error, info, warn};
@@ -24,13 +24,10 @@ static RUNNING: AtomicBool = AtomicBool::new(true);
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// AirPods Bluetooth MAC address (e.g., AA:BB:CC:DD:EE:FF)
+    /// AirPods Bluetooth MAC address (e.g., AA:BB:CC:DD:EE:FF).
+    /// If omitted, connects to the first AirPods found via the MagicAAP driver.
     #[arg(short, long)]
-    mac: String,
-
-    /// L2CAP PSM to connect to (default: 0x1001 for AACP)
-    #[arg(short, long, default_value = "4097")]
-    psm: u16,
+    mac: Option<String>,
 
     /// OpenTrack UDP target address
     #[arg(long, default_value = "127.0.0.1")]
@@ -56,8 +53,12 @@ fn main() -> Result<()> {
 
     info!("AirPods Head Tracking for Windows");
     info!("==================================");
-    info!("Target MAC: {}", args.mac);
-    info!("PSM: 0x{:04X}", args.psm);
+    info!("Using MagicAAP driver for L2CAP access");
+    if let Some(ref mac) = args.mac {
+        info!("Target MAC: {}", mac);
+    } else {
+        info!("Target MAC: auto-detect (first available)");
+    }
     info!(
         "OpenTrack: {}:{}",
         args.opentrack_addr, args.opentrack_port
@@ -68,12 +69,9 @@ fn main() -> Result<()> {
     // Set up Ctrl+C handler for graceful shutdown
     install_ctrl_handler();
 
-    // Parse MAC address
-    let mac_addr = parse_mac_address(&args.mac).context("Invalid MAC address")?;
-
-    // Connect to AirPods via Bluetooth L2CAP
+    // Connect to AirPods via MagicAAP driver
     info!("Connecting to AirPods...");
-    let conn = BtConnection::connect(mac_addr, Some(args.psm))?;
+    let conn = BtConnection::connect(args.mac.as_deref())?;
 
     // Initialize AACP protocol
     let aacp = AacpManager::new(&conn);

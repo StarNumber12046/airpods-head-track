@@ -5,7 +5,7 @@
 
 use crate::bluetooth::BtConnection;
 use anyhow::{Context, Result};
-use log::{debug, info};
+use log::{debug, info, warn};
 
 /// AACP packet header (constant for all data packets)
 const AACP_HEADER: [u8; 4] = [0x04, 0x00, 0x04, 0x00];
@@ -38,23 +38,82 @@ impl<'a> AacpManager<'a> {
     pub fn handshake(&self) -> Result<()> {
         info!("Performing AACP handshake...");
 
-        // Step 1: Send handshake packet
+        // Small delay after connection to let the driver settle
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // Drain any stale data that may have been buffered by the driver
+        let mut drain_buf = [0u8; 512];
+        match self.conn.recv_timeout(&mut drain_buf, 500) {
+            Ok(n) if n > 0 => {
+                debug!(
+                    "Drained {} stale bytes from driver: {:02X?}",
+                    n,
+                    &drain_buf[..n.min(32)]
+                );
+            }
+            _ => {
+                debug!("No stale data to drain");
+            }
+        }
+
+        // Step 1: Send handshake packet with retry logic
         let handshake = [
             0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00,
         ];
-        self.conn.send(&handshake).context("Failed to send handshake")?;
-        debug!("Sent handshake packet");
 
-        // Wait for handshake ACK
-        let mut buf = [0u8; 512];
-        let n = self.conn.recv(&mut buf).context("Failed to receive handshake ACK")?;
-        if n > 0 {
-            debug!(
-                "Received handshake response ({} bytes): {:02X?}",
-                n,
-                &buf[..n.min(20)]
-            );
+        let mut ack_received = false;
+        let max_attempts = 3;
+        let timeouts_ms = [10000u32, 15000, 20000]; // Increasing timeouts per attempt
+
+        for attempt in 0..max_attempts {
+            if attempt > 0 {
+                warn!(
+                    "Handshake attempt {} of {} (retrying)...",
+                    attempt + 1,
+                    max_attempts
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+
+            self.conn.send(&handshake).context("Failed to send handshake")?;
+            debug!("Sent handshake packet (attempt {})", attempt + 1);
+
+            // Wait for handshake ACK with longer timeout
+            let mut buf = [0u8; 512];
+            match self.conn.recv_timeout(&mut buf, timeouts_ms[attempt]) {
+                Ok(n) if n > 0 => {
+                    debug!(
+                        "Received handshake response ({} bytes): {:02X?}",
+                        n,
+                        &buf[..n.min(32)]
+                    );
+                    ack_received = true;
+                    break;
+                }
+                Ok(_) => {
+                    warn!("Received empty handshake response (attempt {})", attempt + 1);
+                }
+                Err(e) => {
+                    warn!(
+                        "Handshake ACK not received (attempt {}): {}",
+                        attempt + 1,
+                        e
+                    );
+                }
+            }
+        }
+
+        if !ack_received {
+            return Err(anyhow::anyhow!(
+                "Failed to receive handshake ACK after {} attempts.\n\
+                 Possible causes:\n\
+                 - AirPods may not be in ear / lid may be closed\n\
+                 - Another app may have an active AACP session (e.g., MagicPods)\n\
+                 - Try disconnecting and reconnecting AirPods in Windows Bluetooth settings\n\
+                 - Ensure the MagicAAP driver is functioning correctly",
+                max_attempts
+            ));
         }
 
         // Step 2: Set feature flags
@@ -74,6 +133,9 @@ impl<'a> AacpManager<'a> {
             .send(&set_features)
             .context("Failed to send feature flags")?;
         debug!("Sent feature flags packet");
+
+        // Small delay between protocol steps
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Step 3: Request notifications
         let request_notif = Self::make_data_packet(&[
