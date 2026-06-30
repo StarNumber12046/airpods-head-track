@@ -63,15 +63,14 @@ impl<'a> AacpManager<'a> {
         ];
 
         let mut ack_received = false;
-        let max_attempts = 3;
         let timeouts_ms = [10000u32, 15000, 20000]; // Increasing timeouts per attempt
 
-        for attempt in 0..max_attempts {
+        for (attempt, timeout) in timeouts_ms.iter().enumerate() {
             if attempt > 0 {
                 warn!(
                     "Handshake attempt {} of {} (retrying)...",
                     attempt + 1,
-                    max_attempts
+                    timeouts_ms.len()
                 );
                 std::thread::sleep(std::time::Duration::from_millis(1000));
             }
@@ -81,7 +80,7 @@ impl<'a> AacpManager<'a> {
 
             // Wait for handshake ACK with longer timeout
             let mut buf = [0u8; 512];
-            match self.conn.recv_timeout(&mut buf, timeouts_ms[attempt]) {
+            match self.conn.recv_timeout(&mut buf, *timeout) {
                 Ok(n) if n > 0 => {
                     debug!(
                         "Received handshake response ({} bytes): {:02X?}",
@@ -106,13 +105,13 @@ impl<'a> AacpManager<'a> {
 
         if !ack_received {
             return Err(anyhow::anyhow!(
-                "Failed to receive handshake ACK after {} attempts.\n\
+                 "Failed to receive handshake ACK after {} attempts.\n\
                  Possible causes:\n\
                  - AirPods may not be in ear / lid may be closed\n\
                  - Another app may have an active AACP session (e.g., MagicPods)\n\
                  - Try disconnecting and reconnecting AirPods in Windows Bluetooth settings\n\
                  - Ensure the MagicAAP driver is functioning correctly",
-                max_attempts
+                timeouts_ms.len()
             ));
         }
 

@@ -116,7 +116,7 @@ fn main() -> Result<()> {
                         }
 
                         // Print status periodically
-                        if tracking_packets % 50 == 0 {
+                        if tracking_packets.is_multiple_of(50) {
                             info!(
                                 "Tracking: pitch={:+6.2} yaw={:+6.2} (packets: {}/{})",
                                 orientation.pitch, orientation.yaw, tracking_packets, packet_count

@@ -202,7 +202,7 @@ mod tests {
         assert!(!tracker.is_calibrated());
 
         // Simulate 3 calibration packets with zeros at the relevant offsets
-        let mut packet = vec![0u8; 70];
+        let packet = vec![0u8; 70];
         // Set bytes 43-48 to some orientation values (e.g., all zeros)
         for _ in 0..3 {
             assert!(tracker.process_packet(&packet).is_none());

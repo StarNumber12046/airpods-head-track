@@ -281,8 +281,7 @@ impl BtConnection {
     pub fn send(&self, data: &[u8]) -> Result<usize> {
         unsafe {
             let event = CreateEventW(None, true, false, None)?;
-            let mut overlapped = OVERLAPPED::default();
-            overlapped.hEvent = event;
+            let mut overlapped = OVERLAPPED { hEvent: event, ..Default::default() };
 
             let mut bytes_written: u32 = 0;
             let result = WriteFile(
@@ -321,8 +320,7 @@ impl BtConnection {
     pub fn recv_timeout(&self, buf: &mut [u8], timeout_ms: u32) -> Result<usize> {
         unsafe {
             let event = CreateEventW(None, true, false, None)?;
-            let mut overlapped = OVERLAPPED::default();
-            overlapped.hEvent = event;
+            let mut overlapped = OVERLAPPED { hEvent: event, ..Default::default() };
 
             let mut bytes_read: u32 = 0;
             let result = ReadFile(
