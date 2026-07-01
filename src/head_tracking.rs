@@ -111,9 +111,7 @@ impl HeadTracker {
                 let pitch_delta = (raw_orientation.pitch - last.pitch).abs();
                 let yaw_delta = (raw_orientation.yaw - last.yaw).abs();
                 if pitch_delta > MAX_SPIKE_DELTA || yaw_delta > MAX_SPIKE_DELTA {
-                    debug!(
-                        "Spike filtered: pitch Δ={pitch_delta:.1}°, yaw Δ={yaw_delta:.1}°"
-                    );
+                    debug!("Spike filtered: pitch Δ={pitch_delta:.1}°, yaw Δ={yaw_delta:.1}°");
                     last
                 } else {
                     raw_orientation
