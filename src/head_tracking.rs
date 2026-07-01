@@ -34,7 +34,12 @@ pub struct HeadTracker {
     o2_neutral: i32,
     o3_neutral: i32,
     calibration_count: usize,
+    last_orientation: Option<Orientation>,
 }
+
+/// Maximum angular change (degrees) between consecutive packets allowed before
+/// a reading is considered a spike and discarded.
+const MAX_SPIKE_DELTA: f32 = 45.0;
 
 /// Offset applied during calibration (from Android source).
 const ORIENTATION_OFFSET: i32 = 5500;
@@ -53,6 +58,7 @@ impl HeadTracker {
             o2_neutral: 0,
             o3_neutral: 0,
             calibration_count: calibration_samples,
+            last_orientation: None,
         }
     }
 
@@ -98,7 +104,25 @@ impl HeadTracker {
             return None;
         }
 
-        let orientation = self.calculate_orientation(o1, o2, o3);
+        let raw_orientation = self.calculate_orientation(o1, o2, o3);
+
+        let orientation = match self.last_orientation {
+            Some(last) => {
+                let pitch_delta = (raw_orientation.pitch - last.pitch).abs();
+                let yaw_delta = (raw_orientation.yaw - last.yaw).abs();
+                if pitch_delta > MAX_SPIKE_DELTA || yaw_delta > MAX_SPIKE_DELTA {
+                    debug!(
+                        "Spike filtered: pitch Δ={pitch_delta:.1}°, yaw Δ={yaw_delta:.1}°"
+                    );
+                    last
+                } else {
+                    raw_orientation
+                }
+            }
+            None => raw_orientation,
+        };
+        self.last_orientation = Some(orientation);
+
         let acceleration = Acceleration {
             horizontal: horizontal_accel,
             vertical: vertical_accel,
@@ -115,6 +139,7 @@ impl HeadTracker {
         self.o1_neutral = 19000;
         self.o2_neutral = 0;
         self.o3_neutral = 0;
+        self.last_orientation = None;
     }
 
     /// Returns whether the tracker has completed calibration.
