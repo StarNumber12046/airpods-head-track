@@ -14,7 +14,7 @@ AirPods (particularly AirPods Pro and later) broadcast head tracking data over B
 
 ### MagicAAP Driver
 
-You **must** install the [MagicAAP](https://github.com/oxmc/MagicAAP) kernel driver before using this tool. The driver requires **Windows Test Mode** to be enabled because it is not digitally signed.
+You **must** install the [MagicAAP](https://magicpods.app/magicaap/) kernel driver before using this tool. The driver requires **Windows Test Mode** to be enabled because it is not digitally signed.
 
 Steps:
 1. Enable Windows Test Mode: `bcdedit /set testsigning on` then reboot.
