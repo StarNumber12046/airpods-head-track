@@ -10,6 +10,8 @@ AirPods (particularly AirPods Pro and later) broadcast head tracking data over B
 2. This tool enumerates connected AirPods via the driver's device interface GUID (`{9eec98bb-3c54-45d4-a843-7900c4635e08}`), opens a handle with `CreateFile`, and performs AACP handshake/communication over overlapped `ReadFile`/`WriteFile`.
 3. Head tracking orientation data is parsed from AACP packets, calibrated to a neutral position, and sent to OpenTrack as 6 doubles (yaw, pitch, roll) over UDP on `127.0.0.1:4242`.
 
+Head tracking packets are `04 00 04 00 17 00 00 00 10 00`, a u16 length, then a protobuf-encoded body; the sensor data is bytes field 3 inside field 7. A varint before it changes size (packets are 81 or 80 bytes), so the sensor block is located by parsing, not at a fixed offset. Its three orientation channels (offset 20) are the vector part `(x, y, z)` of the sensor's orientation quaternion in Q15. The scalar part is not sent; it is implied as `w = sqrt(1 - |v|²) ≥ 0`. Whenever the true `w` crosses zero the AirPods therefore flip the sign of all three channels (`q` and `-q` are the same rotation). Head motion is computed as the quaternion rotation from the neutral pose, so these flips have no effect on the output.
+
 ## Prerequisites
 
 ### MagicAAP Driver
@@ -25,9 +27,10 @@ Steps:
 
 ### AirPods
 
-- AirPods Pro (1st or 2nd gen), AirPods Max, or AirPods (3rd gen) recommended.
+- AirPods Pro (1st or 2nd gen), AirPods Max, AirPods (3rd gen), or AirPods 4 recommended (tested on AirPods 4 / A3055).
 - AirPods must be paired and **connected** in Windows Bluetooth settings.
 - Both AirPods must be in your ears (or the lid must be open for the case to be discoverable).
+- Head tracking is started with LibrePods' "alternate" start packet; AirPods 4 only acknowledge the original Pro 2 packet without streaming sensor data.
 
 ## Build
 
@@ -49,6 +52,20 @@ If `--mac` is omitted, the tool connects to the first AirPods found via the Magi
 airpods-head-track
 ```
 
+Look straight ahead when tracking starts: the first samples define the neutral pose. Press **Enter** (or type `r` + Enter) in the console window at any time to re-center.
+
+### Calibration (fixing axis cross-talk)
+
+The IMU inside each AirPod sits at an angle to your head, so with the default formula a nod can also move yaw (and vice versa). Run the guided calibration once per fit of the AirPods in your ears:
+
+```powershell
+airpods-head-track --mac AA:BB:CC:DD:EE:FF --calibrate
+```
+
+Follow the prompts: hold still, then nod (start by looking **up**), turn (start **right**) and tilt (start with the **right** ear toward the shoulder), each for 4 seconds, moving only the named axis. These first directions become positive, matching OpenTrack's signs (pitch up +, yaw right +, roll right +). Every sample is the rotation from the neutral pose in the sensor frame; for each motion the tool removes slow drift and fits the principal rotation axis, whose sign is set by your first move. The three axes are squared up into an orthonormal head frame (the IMU mounting), and the output is yaw, then pitch, then roll in that frame. Motions that are too small, mixed with other axes, or not independent are rejected, and the remaining leakage per axis is reported.
+
+The calibration is saved to `%APPDATA%\airpods-head-track\calibration.txt` (raw recording in `calibration_raw.csv` next to it) and loaded automatically on later runs. Calibration files from older versions are ignored with a warning; run `--calibrate` again. A calibrated run also outputs roll; flatten it in OpenTrack's Mapping if you do not want it.
+
 ### Options
 
 | Flag | Description | Default |
@@ -58,6 +75,10 @@ airpods-head-track
 | `--opentrack-port` | OpenTrack UDP port | `4242` |
 | `--calibration-samples` | Samples to average for neutral position | `10` |
 | `--sensitivity` | Sensitivity multiplier | `1.0` |
+| `--calibrate` | Run the guided calibration, save it, then track | off |
+| `--calibration-file` | Calibration file to load/save | `%APPDATA%\airpods-head-track\calibration.txt` |
+| `--mix-angle` | Uncalibrated LibrePods 2-channel formula, rotated by this angle (degrees); overrides the saved calibration | `45` (LibrePods) |
+| `--raw-log` | Write every head tracking packet (decoded channels, output and hex) to a CSV file | off |
 
 ### OpenTrack Setup
 
@@ -73,7 +94,8 @@ src/
   main.rs           # CLI entry point, main loop
   bluetooth.rs      # MagicAAP driver enumeration and I/O (CreateFile/ReadFile/WriteFile)
   aacp.rs           # AACP protocol handshake, head tracking start/stop, packet parsing
-  head_tracking.rs  # Orientation calculation from raw AACP packets, calibration
+  head_tracking.rs  # Neutral pose and raw-to-orientation mapping
+  calibration.rs    # Guided calibration fit (drift removal, PCA, 3x3 decoupling), save/load
   opentrack.rs      # OpenTrack UDP output
   note               get sdp information or scan for paired BLE devices
 ```

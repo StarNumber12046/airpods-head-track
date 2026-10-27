@@ -156,35 +156,13 @@ impl<'a> AacpManager<'a> {
     /// Send the "start head tracking" command.
     pub fn start_head_tracking(&self) -> Result<()> {
         info!("Starting head tracking...");
-        let payload: [u8; 22] = [
-            opcodes::HEADTRACKING,
-            0x00,
-            0x00,
-            0x00,
-            0x10,
-            0x00,
-            0x10,
-            0x00,
-            0x08,
-            0xA1,
-            0x02,
-            0x42,
-            0x0B,
-            0x08,
-            0x0E,
-            0x10,
-            0x02,
-            0x1A,
-            0x05,
-            0x01,
-            0x40,
-            0x9C,
+        // Alternate start packet (LibrePods default; required by AirPods 4 / newer firmware)
+        let payload: [u8; 23] = [
+            0x17, 0x00, 0x00, 0x00, 0x10, 0x00, 0x0F, 0x00, 0x08, 0x73, 0x42, 0x0B, 0x08, 0x10,
+            0x10, 0x02, 0x1A, 0x05, 0x01, 0x40, 0x9C, 0x00, 0x00,
         ];
-        // The packet from the Android source also sends two trailing 0x00 bytes
-        let mut full_payload = payload.to_vec();
-        full_payload.extend_from_slice(&[0x00, 0x00]);
 
-        let packet = Self::make_data_packet(&full_payload);
+        let packet = Self::make_data_packet(&payload);
         self.conn
             .send(&packet)
             .context("Failed to send start head tracking")?;
@@ -196,34 +174,11 @@ impl<'a> AacpManager<'a> {
     pub fn stop_head_tracking(&self) -> Result<()> {
         info!("Stopping head tracking...");
         let payload: [u8; 23] = [
-            opcodes::HEADTRACKING,
-            0x00,
-            0x00,
-            0x00,
-            0x10,
-            0x00,
-            0x11,
-            0x00,
-            0x08,
-            0x7E,
-            0x10,
-            0x02,
-            0x42,
-            0x0B,
-            0x08,
-            0x4E,
-            0x10,
-            0x02,
-            0x1A,
-            0x05,
-            0x01,
-            0x00,
-            0x00,
+            0x17, 0x00, 0x00, 0x00, 0x10, 0x00, 0x0F, 0x00, 0x08, 0x75, 0x42, 0x0B, 0x08, 0x10,
+            0x10, 0x02, 0x1A, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00,
         ];
-        let mut full_payload = payload.to_vec();
-        full_payload.extend_from_slice(&[0x00, 0x00]);
 
-        let packet = Self::make_data_packet(&full_payload);
+        let packet = Self::make_data_packet(&payload);
         self.conn
             .send(&packet)
             .context("Failed to send stop head tracking")?;
@@ -241,29 +196,31 @@ impl<'a> AacpManager<'a> {
         Ok(Some(n))
     }
 
-    /// Check if a packet is a head tracking data packet.
+    /// Check if a packet is a head tracking sensor packet.
     pub fn is_head_tracking_packet(data: &[u8]) -> bool {
-        if data.len() <= 60 {
-            return false;
-        }
+        Self::head_tracking_sensor_block(data).is_some()
+    }
 
-        // Check prefix: 04 00 04 00 17 00 00 00 10 00
-        let prefix: [u8; 10] = [0x04, 0x00, 0x04, 0x00, 0x17, 0x00, 0x00, 0x00, 0x10, 0x00];
-        if data[..10] != prefix {
-            return false;
+    /// Sensor block of a head tracking packet.
+    ///
+    /// Layout: `04 00 04 00 17 00 00 00 10 00`, a u16 LE length of the rest,
+    /// then a protobuf-encoded body. The sensor data is the bytes field 3
+    /// inside the message in field 7. Fields before it are varints whose size
+    /// changes (e.g. `ff 7f` vs `01`), so the block has no fixed offset in the
+    /// packet; reading it at fixed offsets shifts the values by a byte.
+    pub fn head_tracking_sensor_block(data: &[u8]) -> Option<&[u8]> {
+        const PREFIX: [u8; 10] = [0x04, 0x00, 0x04, 0x00, 0x17, 0x00, 0x00, 0x00, 0x10, 0x00];
+        /// The block must reach the acceleration channels (offset 28..32).
+        const MIN_BLOCK: usize = 32;
+        if data.len() < 12 || data[..10] != PREFIX {
+            return None;
         }
-
-        // Byte 10 must be 0x44 or 0x45 (sub-type)
-        if data[10] != 0x44 && data[10] != 0x45 {
-            return false;
+        if u16::from_le_bytes([data[10], data[11]]) as usize != data.len() - 12 {
+            return None;
         }
-
-        // Byte 11 must be 0x00
-        if data[11] != 0x00 {
-            return false;
-        }
-
-        true
+        let message = protobuf_bytes_field(&data[12..], 7)?;
+        let block = protobuf_bytes_field(message, 3)?;
+        (block.len() >= MIN_BLOCK).then_some(block)
     }
 
     /// Get the opcode from an AACP data packet.
@@ -280,5 +237,92 @@ impl<'a> AacpManager<'a> {
         let mut packet = AACP_HEADER.to_vec();
         packet.extend_from_slice(payload);
         packet
+    }
+}
+
+/// A real 81-byte sensor packet captured from AirPods 4 (orientation at
+/// packet offset 43).
+#[cfg(test)]
+pub(crate) fn sample_sensor_packet() -> Vec<u8> {
+    tests::hex(tests::LONG)
+}
+
+/// Contents of the first length-delimited field `field` in a protobuf message.
+fn protobuf_bytes_field(mut msg: &[u8], field: u64) -> Option<&[u8]> {
+    while !msg.is_empty() {
+        let (tag, rest) = read_varint(msg)?;
+        msg = rest;
+        match tag & 7 {
+            0 => msg = read_varint(msg)?.1,
+            1 => msg = msg.get(8..)?,
+            2 => {
+                let (len, rest) = read_varint(msg)?;
+                let len = usize::try_from(len).ok()?;
+                let value = rest.get(..len)?;
+                if tag >> 3 == field {
+                    return Some(value);
+                }
+                msg = &rest[len..];
+            }
+            5 => msg = msg.get(4..)?,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Decode a protobuf varint; returns the value and the remaining bytes.
+fn read_varint(data: &[u8]) -> Option<(u64, &[u8])> {
+    let mut value = 0u64;
+    for (i, byte) in data.iter().enumerate().take(10) {
+        value |= u64::from(byte & 0x7f) << (7 * i);
+        if byte & 0x80 == 0 {
+            return Some((value, &data[i + 1..]));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(super) fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Two consecutive packets captured from AirPods 4: the usual 81-byte
+    /// form (2-byte varint after the header) and the 80-byte form (1-byte
+    /// varint) that occasionally appears.
+    pub(super) const LONG: &str = "04000400170000001000450008ff7f10013a3e08101a3a015021d8c7130d0000030043998d62bb000000006cb9a83eb5fc0300020001005e1003d37706fdff000001008d020d035c0034aac63786ff0000";
+    const SHORT: &str = "040004001700000010004400080110013a3e08101a3a01088297cc130d0000030043cbc463bb0000000078b9ba3ebbfcffff00000e005f1003d37706030000000b008c020e035d00c29c973796ff0000";
+
+    #[test]
+    fn sensor_block_is_found_regardless_of_varint_size() {
+        let long = hex(LONG);
+        let short = hex(SHORT);
+        assert_eq!((long.len(), short.len()), (81, 80));
+        let a = AacpManager::head_tracking_sensor_block(&long).unwrap();
+        let b = AacpManager::head_tracking_sensor_block(&short).unwrap();
+        // Same layout inside the block: orientation at 20..26.
+        assert_eq!(a.len(), b.len());
+        assert_eq!(&a[20..26], &hex("6cb9a83eb5fc")[..]);
+        assert_eq!(&b[20..26], &hex("78b9ba3ebbfc")[..]);
+    }
+
+    #[test]
+    fn other_head_tracking_messages_are_not_sensor_packets() {
+        // Start/stop acknowledgement on the same opcode.
+        let ack = [
+            0x04, 0x00, 0x04, 0x00, 0x17, 0x00, 0x00, 0x00, 0x10, 0x00, 0x08, 0x00, 0x08, 0x05,
+            0x10, 0x01, 0x4A, 0x02, 0x08, 0x0E,
+        ];
+        assert!(!AacpManager::is_head_tracking_packet(&ack));
+        // Truncated sensor packet: declared length no longer matches.
+        let long = hex(LONG);
+        assert!(!AacpManager::is_head_tracking_packet(&long[..70]));
     }
 }
